@@ -31,7 +31,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from os import path
-from platform import system
+from platform import system, python_version_tuple
 from typing import List
 
 from pylibftdi import Device, Driver, LibraryMissingError
@@ -40,9 +40,22 @@ from dmx.drivers import DMXDriver
 
 DRIVER_PATH = path.abspath(path.dirname(__file__))
 
-if system() == "Linux":
+USE_TIME_SLEEP_FOR_WAIT = True
+if (int(python_version_tuple()[0]) * 1000 + int(python_version_tuple()[1])) < 3011:
+    USE_TIME_SLEEP_FOR_WAIT = False
 
-    from ctypes import cdll, c_long, byref, Structure
+if USE_TIME_SLEEP_FOR_WAIT:
+    import time
+
+    def wait_ms(milliseconds):
+        """Wait for a specified number of milliseconds."""
+        time.sleep(milliseconds / 1000)
+
+    def wait_us(nanoseconds):
+        """Wait for a specified number of nanoseconds."""
+        time.sleep(nanoseconds / 1000000)
+
+if system() == "Linux":
 
     Driver._lib_search["libftdi"] = tuple([
         path.join(DRIVER_PATH, "libftdi.so"),
@@ -50,58 +63,64 @@ if system() == "Linux":
         path.join(DRIVER_PATH, "libftdi1.so")
     ] + list(Driver._lib_search["libftdi"]))
 
-    _LIBC = cdll.LoadLibrary("libc.so.6")
+    if not USE_TIME_SLEEP_FOR_WAIT:
 
-    class timespec(Structure):
-        """A timespec."""
+        from ctypes import cdll, c_long, byref, Structure
 
-        _fields_ = [("tv_sec", c_long), ("tv_nsec", c_long)]
+        _LIBC = cdll.LoadLibrary("libc.so.6")
 
-    def wait_ms(milliseconds):
-        """Wait for a specified number of milliseconds."""
-        dummy = timespec()
-        sleeper = timespec()
-        sleeper.tv_sec = int(milliseconds / 1000)
-        sleeper.tv_nsec = (milliseconds % 1000) * 1000000
-        _LIBC.nanosleep(byref(sleeper), byref(dummy))
+        class timespec(Structure):
+            """A timespec."""
 
-    def wait_us(nanoseconds):
-        """Wait for a specified number of nanoseconds."""
-        dummy = timespec()
-        sleeper = timespec()
-        sleeper.tv_sec = int(nanoseconds / 1000000)
-        sleeper.tv_nsec = (nanoseconds % 1000) * 1000
-        _LIBC.nanosleep(byref(sleeper), byref(dummy))
+            _fields_ = [("tv_sec", c_long), ("tv_nsec", c_long)]
+
+        def wait_ms(milliseconds):
+            """Wait for a specified number of milliseconds."""
+            dummy = timespec()
+            sleeper = timespec()
+            sleeper.tv_sec = int(milliseconds / 1000)
+            sleeper.tv_nsec = (milliseconds % 1000) * 1000000
+            _LIBC.nanosleep(byref(sleeper), byref(dummy))
+
+        def wait_us(nanoseconds):
+            """Wait for a specified number of nanoseconds."""
+            dummy = timespec()
+            sleeper = timespec()
+            sleeper.tv_sec = int(nanoseconds / 1000000)
+            sleeper.tv_nsec = (nanoseconds % 1000) * 1000
+            _LIBC.nanosleep(byref(sleeper), byref(dummy))
 
 elif system() == "Windows":
 
-    from ctypes import wintypes, windll, byref
+    if not USE_TIME_SLEEP_FOR_WAIT:
 
-    _WIN32 = windll.kernel32
-    _MS = 1000000
-    _INFINITE = 0xFFFFFFFF
+        from ctypes import wintypes, windll, byref
 
-    def wait_ms(milliseconds):
-        """Wait for a specified number of milliseconds."""
-        wait_time = wintypes.LARGE_INTEGER(-(_MS * abs(milliseconds)))
-        timer_handle = _WIN32.CreateWaitableTimerW(None, True, None)
-        if timer_handle == 0:
-            raise Exception("CreateWaitableTimerW returned NULL")
-        if _WIN32.SetWaitableTimer(timer_handle, byref(wait_time), 0, None, None, False) == 0:
-            raise Exception("SetWaitableTimer returned 0")
-        _WIN32.WaitForSingleObject(timer_handle, _INFINITE)
-        _WIN32.CloseHandle(timer_handle)
+        _WIN32 = windll.kernel32
+        _MS = 1000000
+        _INFINITE = 0xFFFFFFFF
 
-    def wait_us(nanoseconds):
-        """Wait for a specified number of nanoseconds."""
-        wait_time = wintypes.LARGE_INTEGER(-abs(nanoseconds))
-        timer_handle = _WIN32.CreateWaitableTimerW(None, True, None)
-        if timer_handle == 0:
-            raise Exception("CreateWaitableTimerW returned NULL")
-        if _WIN32.SetWaitableTimer(timer_handle, byref(wait_time), 0, None, None, False) == 0:
-            raise Exception("SetWaitableTimer returned 0")
-        _WIN32.WaitForSingleObject(timer_handle, _INFINITE)
-        _WIN32.CloseHandle(timer_handle)
+        def wait_ms(milliseconds):
+            """Wait for a specified number of milliseconds."""
+            wait_time = wintypes.LARGE_INTEGER(-(_MS * abs(milliseconds)))
+            timer_handle = _WIN32.CreateWaitableTimerW(None, True, None)
+            if timer_handle == 0:
+                raise Exception("CreateWaitableTimerW returned NULL")
+            if _WIN32.SetWaitableTimer(timer_handle, byref(wait_time), 0, None, None, False) == 0:
+                raise Exception("SetWaitableTimer returned 0")
+            _WIN32.WaitForSingleObject(timer_handle, _INFINITE)
+            _WIN32.CloseHandle(timer_handle)
+
+        def wait_us(nanoseconds):
+            """Wait for a specified number of nanoseconds."""
+            wait_time = wintypes.LARGE_INTEGER(-abs(nanoseconds))
+            timer_handle = _WIN32.CreateWaitableTimerW(None, True, None)
+            if timer_handle == 0:
+                raise Exception("CreateWaitableTimerW returned NULL")
+            if _WIN32.SetWaitableTimer(timer_handle, byref(wait_time), 0, None, None, False) == 0:
+                raise Exception("SetWaitableTimer returned 0")
+            _WIN32.WaitForSingleObject(timer_handle, _INFINITE)
+            _WIN32.CloseHandle(timer_handle)
 
 
 class FT232R(Device, DMXDriver):
