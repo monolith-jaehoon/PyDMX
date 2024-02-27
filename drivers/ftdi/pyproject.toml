@@ -1,6 +1,6 @@
 [project]
 name = "PyDMX-Drivers-FTDI"
-version = "0.1.0"
+version = "0.1.0+monolith0"
 authors = [
   { name="Jacob Allen", email="jacob@polyomino.xyz" },
 ]
